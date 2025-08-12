@@ -30,6 +30,7 @@ quant_config = BitsAndBytesConfig(
 )
 
 tokenizer = AutoTokenizer.from_pretrained(model_id)
+tokenizer.pad_token = tokenizer.eos_token 
 model = AutoModelForCausalLM.from_pretrained(
     model_id,
     quantization_config=quant_config,
@@ -40,20 +41,30 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 
 # Create prompt
-prompt = "How do I create a bubble sort in Python?"
+prompt = "Write a Python function to calculate fibonacci numbers"
 messages = [{"role": "user", "content": prompt}]
 
 # Generate response
-inputs = tokenizer.apply_chat_template(messages, return_tensors="pt").to(model.device)
+inputs = tokenizer.apply_chat_template(
+    messages,
+    return_tensors="pt",
+    add_generation_prompt=True,
+    return_attention_mask=True
+).to(model.device)
 outputs = model.generate(
     inputs,
-    max_new_tokens=200,
-    temperature=0.7
-    # do_sample=True,
+    max_new_tokens=400,
+    temperature=0.7,
+    top_p=0.9,
+    do_sample=True,
+    pad_token_id=tokenizer.eos_token_id
     # top_k=40,
-    # top_p=0.95,
     # repetition_penalty=1.15
 )
 
+# Extract only the generated text (skip the input)
+input_length = inputs.shape[1]
+generated_tokens = outputs[:, input_length:][0]
+
 # Show response
-print(tokenizer.decode(outputs[0], skip_special_tokens=True))
+print(tokenizer.decode(generated_tokens, skip_special_tokens=True))
