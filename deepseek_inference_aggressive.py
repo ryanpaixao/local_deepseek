@@ -1,7 +1,7 @@
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 import torch
 from huggingface_hub import login
-from accelerate import init_empty_weights
+from accelerate import init_empty_weights, infer_auto_device_map, load_checkpoint_in_model
 
 import os
 from dotenv import load_dotenv
@@ -18,8 +18,8 @@ login(token=hugging_token)
 
 # Load model (choose one based on your needs)
 # model_id = "deepseek-ai/deepseek-coder-1.3b-instruct"
-# model_id = "deepseek-ai/deepseek-coder-6.7b-instruct" # For coding tasks
-model_id = "deepseek-ai/deepseek-llm-7b-chat" # For general chat, appears to be too much for my 4GB VRAM
+model_id = "deepseek-ai/deepseek-coder-6.7b-instruct" # For coding tasks
+# model_id = "deepseek-ai/deepseek-llm-7b-chat" # For general chat, appears to be too much for my 4GB VRAM
 # model_id = "deepseek-ai/deepseek-llm-1.3b-chat"
 # model_id = "deepseek-community/deepseek-vl-1.3b-chat"
 
@@ -35,11 +35,11 @@ tokenizer = AutoTokenizer.from_pretrained(model_id)
 tokenizer.pad_token = tokenizer.eos_token
 
 # 1. Create empty model to inspect architecture
-# with init_empty_weights():
-#     model = AutoModelForCausalLM.from_pretrained(
-#         model_id,
-#         trust_remote_code=True
-#     )
+with init_empty_weights():
+    model = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        trust_remote_code=True
+    )
 
 # 2. Create aggressive device map - only first 4 layers on GPU
 gpu_id = 0
@@ -57,12 +57,10 @@ device_map = {
 device_map.update(add_model_layers())
 device_map.update({"model.norm": "cpu", "lm_head": "cpu"})
 
-print(f"device_map: {device_map}")
-
 # 3. Load model with manual offloading
 model = AutoModelForCausalLM.from_pretrained(
     model_id,
-    llm_int8_enable_fp32_cpu_offload=True,
+    # llm_int8_enable_fp32_cpu_offload=True,
     quantization_config=quant_config,
     device_map=device_map,
     offload_state_dict=True, # Critical for 4GB VRAM
@@ -86,22 +84,23 @@ inputs = tokenizer.apply_chat_template(
     padding=True,
     truncation=True,
     max_length=512, # Limit context
-    add_generation_prompt=True,
-    return_attention_mask=True
+    add_generation_prompt=True
+    # return_attention_mask=True
 ).to(model.device)
 
 # Generate with strict memory constraints
-outputs = model.generate(
-    inputs,
-    max_new_tokens=200,
-    temperature=0.7,
-    top_k=30,
-    top_p=0.85,
-    do_sample=True,
-    repetition_penalty=1.2,
-    num_beams=1, # Beam search uses more memory
-    pad_token_id=tokenizer.eos_token_id,
-)
+with torch.no_grad():
+    outputs = model.generate(
+        inputs,
+        max_new_tokens=200,
+        temperature=0.7,
+        top_k=30,
+        top_p=0.85,
+        do_sample=True,
+        repetition_penalty=1.2,
+        num_beams=1, # Beam search uses more memory
+        pad_token_id=tokenizer.eos_token_id,
+    )
 
 # Extract only the generated text (skip the input)
 input_length = inputs.shape[1]
